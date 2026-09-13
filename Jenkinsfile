@@ -76,34 +76,59 @@ pipeline {
         }
 
         stage('Deploy to EKS') {
-            steps {
-                sh '''
-                    aws eks update-kubeconfig \
-                      --region ${AWS_REGION} \
-                      --name ${EKS_CLUSTER}
+    steps {
+        sh '''
+            aws eks update-kubeconfig \
+              --region ${AWS_REGION} \
+              --name ${EKS_CLUSTER}
 
-                    kubectl -n ${K8S_NAMESPACE} set image deployment/${DEPLOYMENT} \
-                      ${CONTAINER}=${DOCKER_IMAGE}:${IMAGE_TAG}
-                '''
-            }
-        }
+            echo "Deploying image: ${DOCKER_IMAGE}:${IMAGE_TAG}"
 
-        stage('Verify Deployment') {
-            steps {
+            kubectl -n ${K8S_NAMESPACE} set image deployment/${DEPLOYMENT} \
+              ${CONTAINER}=${DOCKER_IMAGE}:${IMAGE_TAG}
+        '''
+    }
+}
+
+       stage('Verify Deployment') {
+    steps {
+        script {
+            try {
                 sh '''
                     kubectl rollout status \
                       deployment/${DEPLOYMENT} \
                       -n ${K8S_NAMESPACE} \
                       --timeout=5m
+                '''
 
-                    kubectl get pods -n ${K8S_NAMESPACE}
-
+                sh '''
                     kubectl get deployment ${DEPLOYMENT} \
                       -n ${K8S_NAMESPACE}
+
+                    kubectl get pods \
+                      -n ${K8S_NAMESPACE}
                 '''
+
+            } catch (Exception e) {
+
+                echo "Deployment failed!"
+                echo "Starting automatic rollback..."
+
+                sh '''
+                    kubectl rollout undo deployment/${DEPLOYMENT} \
+                      -n ${K8S_NAMESPACE}
+
+                    kubectl rollout status \
+                      deployment/${DEPLOYMENT} \
+                      -n ${K8S_NAMESPACE} \
+                      --timeout=5m
+                '''
+
+                error("Deployment failed. Automatic rollback completed.")
             }
         }
     }
+}
 
     post {
         success {
